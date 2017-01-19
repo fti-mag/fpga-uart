@@ -11,7 +11,7 @@ constant WORD_WIDTH = 8; -- fixed
 constant BIT_NUMBER_TO_BE_PROCESSED = 1 + WORD_WIDTH + 1 + 2; -- fixed
 
 constant BIT_RATE_VALUE = 1; -- 1 Mbps
-constant RELATIVE_PHASE = 1;
+constant RELATIVE_PHASE = 0;
 
 constant NYQUIST_SAMPLING_SPEED = BIT_RATE_VALUE * OVERSAMPLING_RATIO;
 constant SYSTEM_TO_NYQUIST_PRESCALER_MODULE = SYSTEM_CLOCK_SPEED / NYQUIST_SAMPLING_SPEED;
@@ -52,13 +52,15 @@ variable
 	bit_counter[ceil(log2(BIT_NUMBER_TO_BE_PROCESSED))-1..0]: node;
 	oversampling_prescaler[1..0]: node;
 	
+	working_state: SRFFE;
+	
 begin
 	clock = global(pll.c0);
 	pll.inclk0 = system_clock;
 	
 	nyquist_prescaler.clock = clock;
 	
-	sample_enable = (nyquist_prescaler.q[] == (SYSTEM_TO_NYQUIST_PRESCALER_MODULE - 1));
+	sample_enable = nyquist_prescaler.cout;
 	
 	input_trigger.d = input_data_line;
 	input_trigger.clk = clock;
@@ -67,16 +69,29 @@ begin
 	input_edge_sensing.clk = clock;
 	input_edge_sensing.ena = sample_enable;
 	
+	working_state.s = GND;
+	working_state.r = GND;
+	working_state.clk = clock;
+	working_state.ena = sample_enable;
+	
+	if not working_state.q and input_edge_sensing.q then
+		working_state.s = VCC;
+	end if;
+	
+	if working_state.q and sample_counter.cout then
+		working_state.r = VCC;
+	end if;
+	
 	input_data = input_trigger.q;
 	
 	sample_counter.clock = clock;
-	sample_counter.cnt_en = sample_enable;
+	sample_counter.cnt_en = sample_enable and working_state.q;
 	
 	bit_counter[] = sample_counter.q[ceil(log2(TRANSMISSION_SIZE))-1..2];
 	oversampling_prescaler[] = sample_counter.q[1..0];
 	
 	shift_reg.clock = clock;
-	shift_reg.enable = sample_enable and (oversampling_prescaler[] == RELATIVE_PHASE);
+	shift_reg.enable = sample_enable and (oversampling_prescaler[] == RELATIVE_PHASE) and working_state.q;
 	shift_reg.shiftin = input_data;
 	
 	_clock = clock;
