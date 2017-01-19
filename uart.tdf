@@ -1,0 +1,92 @@
+title "uart";
+
+include "pll100.inc";
+include "lpm_counter.inc";
+include "shiftreg12.inc";
+include "edge_sensing_sync.inc";
+
+constant SYSTEM_CLOCK_SPEED = 100; -- 100 MHz -- fixed
+constant OVERSAMPLING_RATIO = 4; -- fixed (should not be modified)
+constant WORD_WIDTH = 8; -- fixed
+constant BIT_NUMBER_TO_BE_PROCESSED = 1 + WORD_WIDTH + 1 + 2; -- fixed
+
+constant BIT_RATE_VALUE = 1; -- 1 Mbps
+constant RELATIVE_PHASE = 1;
+
+constant NYQUIST_SAMPLING_SPEED = BIT_RATE_VALUE * OVERSAMPLING_RATIO;
+constant SYSTEM_TO_NYQUIST_PRESCALER_MODULE = SYSTEM_CLOCK_SPEED / NYQUIST_SAMPLING_SPEED;
+constant TRANSMISSION_SIZE = BIT_NUMBER_TO_BE_PROCESSED * OVERSAMPLING_RATIO;
+
+subdesign uart
+(
+	system_clock: input; -- 50 MHz
+	input_data_line: input;
+	
+	_clock: output;
+	_nyquist_prescaler[ceil(log2(SYSTEM_TO_NYQUIST_PRESCALER_MODULE))-1..0]: output;
+	_sample_enable: output;
+	_sample_counter[ceil(log2(TRANSMISSION_SIZE))-1..0]: output;
+	
+	_input_data: output;
+	
+	_bit_counter[ceil(log2(BIT_NUMBER_TO_BE_PROCESSED))-1..0]: output;
+	_oversampling_prescaler[1..0]: output;
+	
+	_shift_reg[BIT_NUMBER_TO_BE_PROCESSED-1..0]: output;
+)
+variable
+	pll: pll100;
+	clock: node; -- 100 MHz
+	
+	input_trigger: DFF;
+	input_edge_sensing: Edge_Sensing_Sync;
+	input_data: node;
+	
+	nyquist_prescaler: LPM_Counter with (lpm_modulus = SYSTEM_TO_NYQUIST_PRESCALER_MODULE, lpm_width=ceil(log2(SYSTEM_TO_NYQUIST_PRESCALER_MODULE)));
+	
+	sample_enable: node;
+	sample_counter: LPM_Counter with (lpm_modulus = TRANSMISSION_SIZE, lpm_width=ceil(log2(TRANSMISSION_SIZE)));
+	
+	shift_reg: ShiftReg12;
+	
+	bit_counter[ceil(log2(BIT_NUMBER_TO_BE_PROCESSED))-1..0]: node;
+	oversampling_prescaler[1..0]: node;
+	
+begin
+	clock = global(pll.c0);
+	pll.inclk0 = system_clock;
+	
+	nyquist_prescaler.clock = clock;
+	
+	sample_enable = (nyquist_prescaler.q[] == (SYSTEM_TO_NYQUIST_PRESCALER_MODULE - 1));
+	
+	input_trigger.d = input_data_line;
+	input_trigger.clk = clock;
+	
+	input_edge_sensing.d = input_trigger.q;
+	input_edge_sensing.clk = clock;
+	input_edge_sensing.ena = sample_enable;
+	
+	input_data = input_trigger.q;
+	
+	sample_counter.clock = clock;
+	sample_counter.cnt_en = sample_enable;
+	
+	bit_counter[] = sample_counter.q[ceil(log2(TRANSMISSION_SIZE))-1..2];
+	oversampling_prescaler[] = sample_counter.q[1..0];
+	
+	shift_reg.clock = clock;
+	shift_reg.enable = sample_enable and (oversampling_prescaler[] == RELATIVE_PHASE);
+	shift_reg.shiftin = input_data;
+	
+	_clock = clock;
+	_nyquist_prescaler[] = nyquist_prescaler.q[];
+	_sample_enable = sample_enable;
+	
+	_input_data = input_data;
+	
+	_sample_counter[] = sample_counter.q[];
+	_bit_counter[] = bit_counter[];
+	_oversampling_prescaler[] = oversampling_prescaler[];
+	_shift_reg[] = shift_reg.q[];
+end;

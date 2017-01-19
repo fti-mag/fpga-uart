@@ -1,0 +1,10 @@
+*
+!.gitignore
+!*.qpf
+!*.tdf
+!*.inc
+!*.qip
+!*.mif
+!*.py
+!*.asm
+!lib
