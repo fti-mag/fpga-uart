@@ -2,13 +2,13 @@ title "uart";
 
 include "pll100.inc";
 include "lpm_counter.inc";
-include "shiftreg12.inc";
 include "edge_sensing_sync.inc";
 
 constant SYSTEM_CLOCK_SPEED = 100; -- 100 MHz -- fixed
 constant OVERSAMPLING_RATIO = 4; -- fixed (should not be modified)
-constant WORD_WIDTH = 8; -- fixed
-constant BIT_NUMBER_TO_BE_PROCESSED = 1 + WORD_WIDTH + 1 + 2; -- fixed
+constant WORD_WIDTH = 8;
+constant END_WIDTH = 1;
+constant BIT_NUMBER_TO_BE_PROCESSED = 1 + WORD_WIDTH + 1 + END_WIDTH;
 
 constant BIT_RATE_VALUE = 1; -- 1 Mbps
 constant RELATIVE_PHASE = 0;
@@ -22,6 +22,9 @@ subdesign uart
 	system_clock: input; -- 50 MHz
 	input_data_line: input;
 	
+	data_bus[WORD_WIDTH-1..0]: output;
+	irq: output;
+	
 	_clock: output;
 	_nyquist_prescaler[ceil(log2(SYSTEM_TO_NYQUIST_PRESCALER_MODULE))-1..0]: output;
 	_sample_enable: output;
@@ -33,6 +36,8 @@ subdesign uart
 	_oversampling_prescaler[1..0]: output;
 	
 	_shift_reg[BIT_NUMBER_TO_BE_PROCESSED-1..0]: output;
+	
+	_parity_bit: output;
 )
 variable
 	pll: pll100;
@@ -47,12 +52,17 @@ variable
 	sample_enable: node;
 	sample_counter: LPM_Counter with (lpm_modulus = TRANSMISSION_SIZE, lpm_width=ceil(log2(TRANSMISSION_SIZE)));
 	
-	shift_reg: ShiftReg12;
+	shift_reg[BIT_NUMBER_TO_BE_PROCESSED-1..0]: DFFE;
 	
 	bit_counter[ceil(log2(BIT_NUMBER_TO_BE_PROCESSED))-1..0]: node;
 	oversampling_prescaler[1..0]: node;
 	
 	working_state: SRFFE;
+	
+	parity_bit: DFFE;
+	parity_bit_clr: node;
+	
+	data_bus_reg[WORD_WIDTH-1..0]: DFFE;
 	
 begin
 	clock = global(pll.c0);
@@ -78,8 +88,18 @@ begin
 		working_state.s = VCC;
 	end if;
 	
+	data_bus_reg[].d = shift_reg[WORD_WIDTH+END_WIDTH..END_WIDTH+1].q;
+	data_bus[] = data_bus_reg[].q;
+	data_bus_reg[].clk = clock;
+	data_bus_reg[].ena = GND;
+	irq = GND;
+	
 	if working_state.q and sample_counter.cout then
 		working_state.r = VCC;
+		if parity_bit.q == shift_reg[END_WIDTH].q then
+			data_bus_reg[].ena = VCC;
+			irq = VCC;
+		end if;
 	end if;
 	
 	input_data = input_trigger.q;
@@ -90,9 +110,27 @@ begin
 	bit_counter[] = sample_counter.q[ceil(log2(TRANSMISSION_SIZE))-1..2];
 	oversampling_prescaler[] = sample_counter.q[1..0];
 	
-	shift_reg.clock = clock;
-	shift_reg.enable = sample_enable and (oversampling_prescaler[] == RELATIVE_PHASE) and working_state.q;
-	shift_reg.shiftin = input_data;
+	shift_reg[].clk = clock;
+	shift_reg[0].d = input_data;
+	shift_reg[BIT_NUMBER_TO_BE_PROCESSED-1..1].d = shift_reg[BIT_NUMBER_TO_BE_PROCESSED-2..0].q;
+	shift_reg[].ena = GND;
+	
+	parity_bit.clk = clock;
+	parity_bit.clrn = not parity_bit_clr;
+	parity_bit.d = input_data xor parity_bit.q;
+	parity_bit.ena = GND;
+	
+	parity_bit_clr = GND;
+	
+	if sample_enable and (oversampling_prescaler[] == RELATIVE_PHASE) and working_state.q then
+		shift_reg[].ena = VCC;
+		if bit_counter[] == 0 then
+			parity_bit_clr = VCC;
+		end if;
+		if bit_counter[] <= WORD_WIDTH then
+			parity_bit.ena = VCC;
+		end if;
+	end if;
 	
 	_clock = clock;
 	_nyquist_prescaler[] = nyquist_prescaler.q[];
@@ -103,5 +141,7 @@ begin
 	_sample_counter[] = sample_counter.q[];
 	_bit_counter[] = bit_counter[];
 	_oversampling_prescaler[] = oversampling_prescaler[];
-	_shift_reg[] = shift_reg.q[];
+	_shift_reg[] = shift_reg[].q;
+	
+	_parity_bit = parity_bit.q;
 end;
