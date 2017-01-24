@@ -5,13 +5,14 @@ include "lpm_counter.inc";
 include "edge_sensing_sync.inc";
 
 constant SYSTEM_CLOCK_SPEED = 100; -- 100 MHz -- fixed
-constant OVERSAMPLING_RATIO = 4; -- fixed (should not be modified)
+constant OVERSAMPLING_RATIO = 4;
 constant WORD_WIDTH = 8;
 constant END_WIDTH = 1;
 constant BIT_NUMBER_TO_BE_PROCESSED = 1 + WORD_WIDTH + 1 + END_WIDTH;
+constant OVERSAMPLING_BIT_COUNT = ceil(log2(OVERSAMPLING_RATIO))-1;
 
 constant BIT_RATE_VALUE = 1; -- 1 Mbps
-constant RELATIVE_PHASE = 0;
+constant RELATIVE_PHASE = OVERSAMPLING_RATIO / 2 - 2;
 
 constant NYQUIST_SAMPLING_SPEED = BIT_RATE_VALUE * OVERSAMPLING_RATIO;
 constant SYSTEM_TO_NYQUIST_PRESCALER_MODULE = SYSTEM_CLOCK_SPEED / NYQUIST_SAMPLING_SPEED;
@@ -33,7 +34,7 @@ subdesign uart
 	_input_data: output;
 	
 	_bit_counter[ceil(log2(BIT_NUMBER_TO_BE_PROCESSED))-1..0]: output;
-	_oversampling_prescaler[1..0]: output;
+	_oversampling_prescaler[OVERSAMPLING_BIT_COUNT..0]: output;
 	
 	_shift_reg[BIT_NUMBER_TO_BE_PROCESSED-1..0]: output;
 	
@@ -55,7 +56,7 @@ variable
 	shift_reg[BIT_NUMBER_TO_BE_PROCESSED-1..0]: DFFE;
 	
 	bit_counter[ceil(log2(BIT_NUMBER_TO_BE_PROCESSED))-1..0]: node;
-	oversampling_prescaler[1..0]: node;
+	oversampling_prescaler[OVERSAMPLING_BIT_COUNT..0]: node;
 	
 	working_state: SRFFE;
 	
@@ -107,8 +108,8 @@ begin
 	sample_counter.clock = clock;
 	sample_counter.cnt_en = sample_enable and working_state.q;
 	
-	bit_counter[] = sample_counter.q[ceil(log2(TRANSMISSION_SIZE))-1..2];
-	oversampling_prescaler[] = sample_counter.q[1..0];
+	bit_counter[] = sample_counter.q[ceil(log2(TRANSMISSION_SIZE))-1..OVERSAMPLING_BIT_COUNT+1];
+	oversampling_prescaler[] = sample_counter.q[OVERSAMPLING_BIT_COUNT..0];
 	
 	shift_reg[].clk = clock;
 	shift_reg[0].d = input_data;
