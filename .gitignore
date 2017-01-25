@@ -7,4 +7,5 @@
 !*.mif
 !*.py
 !*.asm
+!*.vwf
 !lib
